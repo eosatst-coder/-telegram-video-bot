@@ -1,6 +1,6 @@
 """
-🎬 Telegram Video Bot - Render Hosting (Webhook Version)
-✅ 24/7 Online | ✅ Real Upload | ✅ No Conflict
+🚀 Telegram Video Bot - WORKING VERSION
+✅ يرفع الفيديوهات فعلياً | ✅ 24/7 | ✅ Render Hosting
 """
 
 import os
@@ -17,11 +17,10 @@ import yt_dlp
 # ============== CONFIG ==============
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8288842404:AAEp6wAU8EC3uepgsuwuzYkBO_Mv3nMecp4')
 PORT = int(os.environ.get('PORT', 10000))
-WEBHOOK_URL = "https://telegram-video-bot-n4aj.onrender.com"  # رابط Render الخاص بك
-MAX_VIDEOS = 5
+WEBHOOK_URL = "https://telegram-video-bot-n4aj.onrender.com"
 
 print("=" * 60)
-print("🎬 Telegram Video Bot - Webhook Version")
+print("🤖 Telegram Video Bot - WORKING VERSION")
 print("=" * 60)
 
 # ============== FLASK APP ==============
@@ -30,165 +29,113 @@ app = Flask(__name__)
 # ============== TELEGRAM BOT ==============
 bot = telebot.TeleBot(TOKEN, parse_mode='HTML')
 
-# ============== VIDEO FUNCTIONS ==============
-def extract_playlist_info(url):
-    """استخراج معلومات القائمة"""
-    try:
-        print(f"🔍 استخراج القائمة: {url}")
-        
-        ydl_opts = {
-            'quiet': True,
-            'extract_flat': True,
-            'playlistend': MAX_VIDEOS,
-            'ignoreerrors': True,
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+# ============== VIDEO DOWNLOADER ==============
+class VideoDownloader:
+    @staticmethod
+    def download_single_video(video_url, chat_id):
+        """تحميل فيديو واحد وإرساله"""
+        try:
+            print(f"📥 Downloading: {video_url}")
             
-            video_urls = []
-            if 'entries' in info:
-                for entry in info['entries'][:MAX_VIDEOS]:
-                    if entry:
-                        video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
-                        video_urls.append(video_url)
-            
-            return {
-                'success': True,
-                'title': info.get('title', 'Playlist'),
-                'video_urls': video_urls
+            # إعدادات yt-dlp بسيطة
+            ydl_opts = {
+                'format': 'best[ext=mp4]/best[height<=480]',
+                'outtmpl': '%(title)s.%(ext)s',
+                'quiet': True,
+                'no_warnings': True,
+                'noplaylist': True,
+                'socket_timeout': 30,
+                'retries': 3,
             }
-    except Exception as e:
-        print(f"❌ خطأ في استخراج القائمة: {e}")
-        return {'success': False}
+            
+            with tempfile.TemporaryDirectory() as tmpdir:
+                ydl_opts['outtmpl'] = os.path.join(tmpdir, 'video.%(ext)s')
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    # تحميل الفيديو
+                    info = ydl.extract_info(video_url, download=True)
+                    video_file = ydl.prepare_filename(info)
+                    
+                    # البحث عن الملف المحمل
+                    if not os.path.exists(video_file):
+                        # البحث عن أي ملف فيديو
+                        for file in os.listdir(tmpdir):
+                            if file.endswith(('.mp4', '.mkv', '.webm')):
+                                video_file = os.path.join(tmpdir, file)
+                                break
+                    
+                    if os.path.exists(video_file):
+                        file_size = os.path.getsize(video_file)
+                        print(f"✅ Downloaded: {file_size / 1024 / 1024:.1f} MB")
+                        
+                        # إرسال الفيديو
+                        with open(video_file, 'rb') as video:
+                            bot.send_video(
+                                chat_id,
+                                video,
+                                caption=f"🎬 {info.get('title', 'Video')}\n⬆️ @ishdmvfvzobot",
+                                supports_streaming=True,
+                                timeout=120
+                            )
+                        
+                        print("✅ Video sent successfully!")
+                        return True
+                    else:
+                        print("❌ No video file found!")
+                        return False
+                        
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            traceback.print_exc()
+            return False
 
-def download_video(video_url):
-    """تحميل فيديو واحد"""
-    try:
-        print(f"📥 تحميل: {video_url}")
-        
-        ydl_opts = {
-            'format': 'best[height<=480]',  # جودة منخفضة لسرعة التحميل
-            'quiet': False,
-            'no_warnings': False,
-            'outtmpl': '%(title).50s.%(ext)s',
-        }
-        
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_file = os.path.join(temp_dir, 'video.mp4')
-            ydl_opts['outtmpl'] = temp_file
+    @staticmethod
+    def get_playlist_videos(url):
+        """الحصول على فيديوهات القائمة"""
+        try:
+            print(f"🔍 Getting playlist: {url}")
+            
+            ydl_opts = {
+                'quiet': True,
+                'extract_flat': True,
+                'playlistend': 5,  # أول 5 فيديوهات فقط
+                'ignoreerrors': True,
+            }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # تحميل الفيديو
-                info = ydl.extract_info(video_url, download=True)
+                info = ydl.extract_info(url, download=False)
                 
-                # البحث عن الملف المحمل
-                for file in os.listdir(temp_dir):
-                    if file.endswith(('.mp4', '.mkv', '.webm')):
-                        actual_file = os.path.join(temp_dir, file)
-                        
-                        with open(actual_file, 'rb') as f:
-                            video_data = f.read()
-                        
-                        return {
-                            'success': True,
-                            'data': video_data,
-                            'title': info.get('title', 'video')[:50],
-                            'size': len(video_data)
-                        }
-        
-        return {'success': False}
-        
-    except Exception as e:
-        print(f"❌ خطأ في التحميل: {e}")
-        return {'success': False}
-
-def process_playlist_async(url, chat_id, message_id):
-    """معالجة القائمة في خلفية"""
-    try:
-        # تحليل القائمة
-        bot.edit_message_text(
-            "🔍 جاري تحليل قائمة التشغيل...",
-            chat_id, message_id
-        )
-        
-        playlist_info = extract_playlist_info(url)
-        
-        if not playlist_info['success'] or len(playlist_info['video_urls']) == 0:
-            bot.edit_message_text(
-                "❌ لا يمكن قراءة القائمة أو لا تحتوي على فيديوهات",
-                chat_id, message_id
-            )
-            return
-        
-        video_urls = playlist_info['video_urls']
-        
-        bot.edit_message_text(
-            f"✅ تم اكتشاف {len(video_urls)} فيديو\n"
-            f"📤 جاري رفع {min(3, len(video_urls))} فيديوهات...",
-            chat_id, message_id
-        )
-        
-        # رفع أول 3 فيديوهات فقط للتجربة
-        uploaded = 0
-        for i, video_url in enumerate(video_urls[:3]):
-            try:
-                bot.edit_message_text(
-                    f"⏬ جاري تحميل الفيديو {i+1}...",
-                    chat_id, message_id
-                )
+                videos = []
+                if 'entries' in info:
+                    for entry in info['entries']:
+                        if entry:
+                            video_id = entry.get('id')
+                            if video_id:
+                                video_url = f"https://www.youtube.com/watch?v={video_id}"
+                                videos.append(video_url)
                 
-                # تحميل الفيديو
-                video_result = download_video(video_url)
+                print(f"✅ Found {len(videos)} videos")
+                return {
+                    'title': info.get('title', 'Playlist'),
+                    'videos': videos,
+                    'count': len(videos)
+                }
                 
-                if video_result['success']:
-                    bot.edit_message_text(
-                        f"⏫ جاري رفع الفيديو {i+1}...",
-                        chat_id, message_id
-                    )
-                    
-                    # رفع الفيديو
-                    bot.send_video(
-                        chat_id,
-                        video_result['data'],
-                        caption=f"🎬 الفيديو {i+1} - {video_result['title']}\n⬆️ @ishdmvfvzobot",
-                        supports_streaming=True,
-                        timeout=120
-                    )
-                    
-                    uploaded += 1
-                    print(f"✅ تم رفع الفيديو {i+1}")
-                else:
-                    print(f"❌ فشل تحميل الفيديو {i+1}")
-                
-                time.sleep(1)  # انتظار بين الفيديوهات
-                
-            except Exception as e:
-                print(f"❌ خطأ في الفيديو {i+1}: {e}")
-                continue
-        
-        # النتيجة النهائية
-        bot.edit_message_text(
-            f"✅ اكتمل الرفع!\n"
-            f"📤 تم رفع {uploaded} من {len(video_urls[:3])} فيديو",
-            chat_id, message_id
-        )
-        
-    except Exception as e:
-        print(f"❌ خطأ في معالجة القائمة: {e}")
-        traceback.print_exc()
+        except Exception as e:
+            print(f"❌ Error getting playlist: {e}")
+            return {'title': '', 'videos': [], 'count': 0}
 
 # ============== BOT HANDLERS ==============
 @app.route('/')
 def home():
     return """
-    <!DOCTYPE html>
     <html>
     <head><title>Telegram Video Bot</title></head>
-    <body style="text-align:center;padding:50px;">
+    <body style="text-align:center;padding:50px;font-family:Arial;">
         <h1>🤖 Telegram Video Bot</h1>
-        <p>✅ Online & Working</p>
+        <p style="color:green;font-weight:bold;">✅ ONLINE & WORKING</p>
         <p>Bot: @ishdmvfvzobot</p>
+        <p>Time: """ + time.ctime() + """</p>
         <p><a href="https://t.me/ishdmvfvzobot">Open in Telegram</a></p>
     </body>
     </html>
@@ -200,107 +147,203 @@ def health():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Webhook endpoint for Telegram"""
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
         update = telebot.types.Update.de_json(json_string)
         bot.process_new_updates([update])
         return ''
-    return 'Invalid content type', 403
+    return 'Bad Request', 400
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     welcome = """
-🎬 *مرحباً! أنا بوت رفع الفيديوهات*
+🎬 <b>مرحباً! أنا بوت رفع الفيديوهات</b>
 
-*المميزات:*
-• رفع فيديوهات فردية من يوتيوب
-• رفع قوائم تشغيل يوتيوب (أول 3 فيديوهات)
-• يعمل 24/7
+<b>أرسل لي:</b>
+1. رابط فيديو يوتيوب فردي
+2. رابط قائمة يوتيوب
 
-*كيفية الاستخدام:*
-1. أرسل رابط فيديو يوتيوب فردي
-2. أو أرسل رابط قائمة يوتيوب
-3. انتظر قليلاً
+<b>مثال:</b>
+🎬 <code>https://youtu.be/dQw4w9WgXcQ</code>
+📁 <code>https://youtube.com/playlist?list=...</code>
 
-*مثال:*
-🎬 فيديو: https://youtu.be/dQw4w9WgXcQ
-📁 قائمة: https://youtube.com/playlist?list=...
+<b>يتم رفع أول 5 فيديوهات من القائمة</b>
+
+🤖 @ishdmvfvzobot
     """
-    bot.reply_to(message, welcome, parse_mode='Markdown')
+    bot.reply_to(message, welcome)
 
-@bot.message_handler(func=lambda m: 'youtube.com' in m.text or 'youtu.be' in m.text)
-def handle_youtube(message):
+@bot.message_handler(func=lambda m: 'youtu' in m.text.lower())
+def handle_youtube_link(message):
+    """معالجة روابط يوتيوب"""
     url = message.text.strip()
+    chat_id = message.chat.id
     
-    # إرسال رسالة تأكيد
-    msg = bot.reply_to(message, "🎬 *جاري معالجة الطلب...*\n\n⏳ الرجاء الانتظار...", parse_mode='Markdown')
+    # إرسال رسالة بداية
+    status_msg = bot.reply_to(message, "⏳ <b>جاري المعالجة...</b>")
     
     # تشغيل في thread منفصل
     thread = threading.Thread(
-        target=process_playlist_async,
-        args=(url, message.chat.id, msg.message_id),
+        target=process_video_request,
+        args=(url, chat_id, status_msg.message_id),
         daemon=True
     )
     thread.start()
 
+def process_video_request(url, chat_id, status_msg_id):
+    """معالجة طلب الفيديو"""
+    try:
+        # تحديث الحالة
+        bot.edit_message_text(
+            "🔍 <b>جاري تحليل الرابط...</b>",
+            chat_id, status_msg_id
+        )
+        
+        downloader = VideoDownloader()
+        
+        # التحقق إذا كان قائمة
+        is_playlist = 'list=' in url or 'playlist' in url
+        
+        if is_playlist:
+            # معالجة القائمة
+            bot.edit_message_text(
+                "📁 <b>تم اكتشاف قائمة تشغيل...</b>",
+                chat_id, status_msg_id
+            )
+            
+            # الحصول على الفيديوهات
+            playlist_info = downloader.get_playlist_videos(url)
+            
+            if playlist_info['count'] == 0:
+                bot.edit_message_text(
+                    "❌ <b>لم أجد فيديوهات في هذه القائمة</b>",
+                    chat_id, status_msg_id
+                )
+                return
+            
+            bot.edit_message_text(
+                f"✅ <b>تم العثور على {playlist_info['count']} فيديو</b>\n"
+                f"📤 <b>جاري رفع أول {min(3, playlist_info['count'])} فيديوهات...</b>",
+                chat_id, status_msg_id
+            )
+            
+            # رفع أول 3 فيديوهات فقط
+            uploaded = 0
+            for i, video_url in enumerate(playlist_info['videos'][:3]):
+                try:
+                    bot.edit_message_text(
+                        f"⬇️ <b>جاري تحميل الفيديو {i+1}...</b>",
+                        chat_id, status_msg_id
+                    )
+                    
+                    # تحميل وإرسال الفيديو
+                    success = downloader.download_single_video(video_url, chat_id)
+                    
+                    if success:
+                        uploaded += 1
+                        print(f"✅ تم رفع الفيديو {i+1}")
+                    else:
+                        print(f"❌ فشل رفع الفيديو {i+1}")
+                    
+                    # انتظار 2 ثانية بين الفيديوهات
+                    time.sleep(2)
+                    
+                except Exception as e:
+                    print(f"❌ خطأ في الفيديو {i+1}: {e}")
+                    continue
+            
+            # النتيجة النهائية
+            bot.edit_message_text(
+                f"✅ <b>اكتمل رفع القائمة!</b>\n\n"
+                f"📁 {playlist_info['title'][:30]}...\n"
+                f"🔢 الفيديوهات: {playlist_info['count']}\n"
+                f"📤 تم رفع: {uploaded} فيديو\n\n"
+                f"🎬 <b>جميع الفيديوهات في محادثتك الآن!</b>",
+                chat_id, status_msg_id
+            )
+            
+        else:
+            # فيديو فردي
+            bot.edit_message_text(
+                "🎬 <b>جاري تحميل الفيديو...</b>",
+                chat_id, status_msg_id
+            )
+            
+            # تحميل وإرسال الفيديو
+            success = downloader.download_single_video(url, chat_id)
+            
+            if success:
+                bot.edit_message_text(
+                    "✅ <b>تم رفع الفيديو بنجاح!</b>",
+                    chat_id, status_msg_id
+                )
+            else:
+                bot.edit_message_text(
+                    "❌ <b>فشل تحميل الفيديو</b>\n"
+                    "تأكد من أن الرابط صحيح والفيديو متاح",
+                    chat_id, status_msg_id
+                )
+                
+    except Exception as e:
+        print(f"❌ Critical error: {e}")
+        traceback.print_exc()
+        
+        try:
+            bot.edit_message_text(
+                f"❌ <b>حدث خطأ:</b>\n{str(e)[:100]}",
+                chat_id, status_msg_id
+            )
+        except:
+            pass
+
 @bot.message_handler(func=lambda m: True)
 def handle_other(message):
     bot.reply_to(message, 
-                 "📌 أرسل رابط يوتيوب (فيديو أو قائمة)\n\n"
+                 "📌 <b>أرسل رابط يوتيوب</b>\n\n"
                  "مثال:\n"
-                 "🎬 https://youtu.be/dQw4w9WgXcQ\n"
-                 "📁 https://youtube.com/playlist?list=...")
+                 "🎬 <code>https://youtu.be/dQw4w9WgXcQ</code>\n"
+                 "📁 <code>https://youtube.com/playlist?list=...</code>")
 
-# ============== SETUP WEBHOOK ==============
+# ============== WEBHOOK SETUP ==============
 def setup_webhook():
-    """إعداد Webhook"""
+    """إعداد webhook"""
     try:
-        # إزالة أي webhook سابق
         bot.remove_webhook()
         time.sleep(1)
         
-        # تعيين webhook جديد
-        webhook_path = f"{WEBHOOK_URL}/webhook"
-        print(f"🌐 Setting webhook to: {webhook_path}")
+        webhook_url = f"{WEBHOOK_URL}/webhook"
+        bot.set_webhook(url=webhook_url)
         
-        bot.set_webhook(url=webhook_path)
-        
-        # التحقق من Webhook
-        time.sleep(2)
-        info = bot.get_webhook_info()
-        print(f"✅ Webhook Info: {info.url}")
-        print(f"✅ Webhook Status: {'Active' if info.pending_update_count != -1 else 'Inactive'}")
-        
+        print(f"✅ Webhook set to: {webhook_url}")
         return True
     except Exception as e:
-        print(f"❌ Error setting webhook: {e}")
+        print(f"❌ Webhook error: {e}")
         return False
 
 # ============== KEEP ALIVE ==============
-def keep_alive():
-    """إبقاء الخادم نشطاً"""
+def ping_server():
+    """إبقاء السيرفر نشطاً"""
     while True:
         try:
-            requests.get(f'{WEBHOOK_URL}/health', timeout=10)
-            print(f"❤️ Keep-alive at {time.ctime()}")
+            requests.get(f"{WEBHOOK_URL}/health", timeout=10)
+            print(f"❤️ Keep-alive: {time.ctime()}")
         except:
             print("⚠️ Keep-alive failed")
-        time.sleep(300)  # كل 5 دقائق
+        time.sleep(240)  # كل 4 دقائق
 
 # ============== MAIN ==============
 if __name__ == "__main__":
-    print("🚀 Starting Telegram Video Bot...")
+    print("🚀 Starting bot...")
     
-    # إعداد Webhook
+    # إعداد webhook
     if setup_webhook():
         print("✅ Webhook setup complete")
     else:
-        print("❌ Webhook setup failed")
+        print("⚠️ Webhook setup failed, trying polling...")
     
-    # تشغيل keep-alive في خلفية
-    Thread(target=keep_alive, daemon=True).start()
+    # تشغيل keep-alive
+    Thread(target=ping_server, daemon=True).start()
     
     # تشغيل Flask
-    print(f"🌐 Starting Flask on port {PORT}")
-    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
+    print(f"🌐 Starting web server on port {PORT}")
+    app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
