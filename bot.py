@@ -1,6 +1,6 @@
 """
 🎬 Telegram Video Bot - Render Hosting
-✅ 24/7 Online | ✅ Cloud Hosted
+✅ 24/7 Online | ✅ Cloud Hosted | ✅ Real Video Upload
 """
 
 import os
@@ -8,16 +8,20 @@ import time
 import telebot
 import requests
 import urllib3
+import tempfile
+import threading
 from flask import Flask
 from threading import Thread
+from io import BytesIO
+import yt_dlp
 
 # ============== CONFIG ==============
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8288842404:AAEp6wAU8EC3uepgsuwuzYkBO_Mv3nMecp4')
 PORT = int(os.environ.get('PORT', 10000))
 
-print("=" * 50)
+print("=" * 60)
 print("🎬 Telegram Video Bot - Render Hosting")
-print("=" * 50)
+print("=" * 60)
 print(f"🤖 Token: {TOKEN[:15]}...")
 print(f"🌐 Port: {PORT}")
 
@@ -102,6 +106,7 @@ def home():
                 <p><strong>Host:</strong> Render.com</p>
                 <p><strong>Status:</strong> Active 24/7</p>
                 <p><strong>Time:</strong> """ + time.ctime() + """</p>
+                <p><strong>Features:</strong> Real video upload</p>
             </div>
             
             <div class="feature">
@@ -109,15 +114,15 @@ def home():
                 <span>Direct video upload to Telegram</span>
             </div>
             <div class="feature">
+                <span class="feature-icon">🎬</span>
+                <span>YouTube, TikTok, Instagram support</span>
+            </div>
+            <div class="feature">
                 <span class="feature-icon">🌐</span>
                 <span>Permanent cloud hosting</span>
             </div>
-            <div class="feature">
-                <span class="feature-icon">💾</span>
-                <span>No files stored on your device</span>
-            </div>
             
-            <p>This bot is permanently hosted on Render cloud</p>
+            <p>This bot can upload videos directly to Telegram</p>
             <a href="https://t.me/ishdmvfvzobot" class="bot-link" target="_blank">
                 🚀 Open in Telegram
             </a>
@@ -140,18 +145,6 @@ def health():
 def ping():
     return "Pong", 200
 
-@app.route('/reset')
-def reset_webhook():
-    """Reset webhook for Telegram bot"""
-    try:
-        # Forcefully delete webhook
-        http = urllib3.PoolManager()
-        url = f"https://api.telegram.org/bot{TOKEN}/deleteWebhook"
-        response = http.request('GET', url)
-        return f"Webhook reset: {response.data.decode()}", 200
-    except Exception as e:
-        return f"Error: {str(e)}", 500
-
 # ============== TELEGRAM BOT ==============
 bot = telebot.TeleBot(TOKEN, parse_mode='HTML')
 
@@ -163,6 +156,101 @@ try:
 except Exception as e:
     print(f"⚠️ Could not clear webhook: {e}")
 
+# ============== VIDEO DOWNLOAD FUNCTIONS ==============
+def download_video(url, chat_id, message_id):
+    """تحميل الفيديو ورفعه"""
+    try:
+        # إرسال رسالة تبدأ التحميل
+        bot.edit_message_text(
+            "📥 <b>جاري تحميل الفيديو...</b>",
+            chat_id, message_id
+        )
+        
+        # إعدادات yt-dlp
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': '%(title)s.%(ext)s',
+            'quiet': True,
+            'no_warnings': True,
+            'noplaylist': True,
+            'nooverwrites': True,
+            'retries': 10,
+            'fragment_retries': 10,
+            'ignoreerrors': True,
+            'no_check_certificate': True,
+            'geo_bypass': True,
+            'geo_bypass_country': 'US',
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        }
+        
+        # إنشاء مجلد مؤقت
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ydl_opts['outtmpl'] = os.path.join(temp_dir, '%(title)s.%(ext)s')
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # الحصول على معلومات الفيديو
+                info = ydl.extract_info(url, download=True)
+                
+                # تحديث الرسالة
+                bot.edit_message_text(
+                    f"📤 <b>جاري رفع الفيديو...</b>\n\n"
+                    f"🎬 <b>العنوان:</b> {info.get('title', 'فيديو')[:50]}...\n"
+                    f"⏱ <b>المدة:</b> {info.get('duration', 0) // 60}:{info.get('duration', 0) % 60:02d}",
+                    chat_id, message_id
+                )
+                
+                # العثور على الملف المحمل
+                video_file = ydl.prepare_filename(info)
+                if not video_file.endswith('.mp4'):
+                    video_file = video_file.rsplit('.', 1)[0] + '.mp4'
+                
+                # رفع الفيديو إلى تليجرام
+                with open(video_file, 'rb') as video:
+                    bot.send_video(
+                        chat_id,
+                        video,
+                        caption=f"🎬 {info.get('title', 'فيديو')}\n\n"
+                               f"📥 تم الرفع بواسطة @ishdmvfvzobot\n"
+                               f"🌐 استضافة Render.com",
+                        supports_streaming=True,
+                        timeout=300  # 5 دقائق للفيديوهات الكبيرة
+                    )
+                
+                # تحديث رسالة النجاح
+                bot.edit_message_text(
+                    "✅ <b>تم رفع الفيديو بنجاح!</b>\n\n"
+                    "🎬 الفيديو الآن في محادثتك\n"
+                    "💾 مخزن على تليجرام للأبد\n"
+                    "🌐 البوت يعمل 24/7 على Render",
+                    chat_id, message_id
+                )
+                
+                return True
+                
+    except Exception as e:
+        print(f"❌ Download error: {e}")
+        try:
+            bot.edit_message_text(
+                f"❌ <b>حدث خطأ أثناء التحميل:</b>\n\n"
+                f"{str(e)[:200]}",
+                chat_id, message_id
+            )
+        except:
+            pass
+        return False
+
+def download_video_thread(url, chat_id, message_id):
+    """تشغيل التحميل في thread منفصل"""
+    thread = threading.Thread(
+        target=download_video,
+        args=(url, chat_id, message_id),
+        daemon=True
+    )
+    thread.start()
+
+# ============== BOT COMMANDS ==============
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     welcome = """
@@ -173,16 +261,17 @@ def send_welcome(message):
 • رفع مباشر إلى تليجرام
 • يعمل 24/7 على السحابة
 • لا يحفظ ملفات على جهازك
-• تخزين دائم في محادثتك
+• دعم يوتيوب، تيك توك، إنستجرام
 
 🚀 <b>كيفية الاستخدام:</b>
-أرسل رابط فيديو (يوتيوب، تيك توك، إلخ)
+1. أرسل رابط فيديو
+2. انتظر قليلاً
+3. الفيديو يصل مباشرة لمحادثتك
 
 📌 <b>الأوامر المتاحة:</b>
 /start - بدء البوت
 /status - حالة البوت
-/ping - اختبار الاتصال
-/reset - إعادة تعيين البوت
+/test - رابط تجريبي
 
 🌐 <b>الاستضافة:</b> Render.com
 🔗 <b>الرابط:</b> https://telegram-video-bot-n4aj.onrender.com
@@ -207,31 +296,83 @@ def status_command(message):
 def ping_command(message):
     bot.reply_to(message, "🏓 Pong! البوت يعمل بنجاح")
 
-@bot.message_handler(commands=['reset'])
-def reset_command(message):
-    try:
-        bot.remove_webhook()
-        time.sleep(1)
-        bot.reply_to(message, "🔄 تم إعادة تعيين البوت بنجاح")
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ في الإعادة: {str(e)[:100]}")
+@bot.message_handler(commands=['test'])
+def test_command(message):
+    """إرسال رابط تجريبي"""
+    test_links = """
+🔗 <b>روابط تجريبية:</b>
+
+• يوتيوب:
+https://youtu.be/dQw4w9WgXcQ
+https://youtube.com/shorts/Aa7KcUfN7Fc
+
+• تيك توك:
+https://www.tiktok.com/@example/video/123456789
+
+• إنستجرام:
+https://www.instagram.com/reel/Cxample/
+
+🚀 <b>أرسل أي رابط وسيتم رفعه!</b>
+    """
+    bot.reply_to(message, test_links)
+
+@bot.message_handler(func=lambda message: message.text and (
+    'youtube.com' in message.text or 
+    'youtu.be' in message.text or
+    'tiktok.com' in message.text or
+    'instagram.com' in message.text or
+    'twitter.com' in message.text
+))
+def handle_video_url(message):
+    """معالجة روابط الفيديوهات"""
+    url = message.text.strip()
+    
+    # إرسال رسالة تأكيد
+    msg = bot.reply_to(message, """
+🔍 <b>جاري فحص الرابط...</b>
+
+⏳ <i>قد تستغرق العملية 1-3 دقائق</i>
+📦 <i>حسب حجم الفيديو وسرعة المصدر</i>
+    """)
+    
+    # بدء التحميل في thread منفصل
+    download_video_thread(url, message.chat.id, msg.message_id)
+
+@bot.message_handler(func=lambda message: message.text and message.text.startswith('http'))
+def handle_other_url(message):
+    """معالجة الروابط الأخرى"""
+    url = message.text.strip()
+    bot.reply_to(message, f"""
+🔗 <b>تم استلام الرابط:</b>
+{url}
+
+❌ <b>هذا النوع من الروابط غير مدعوم حالياً</b>
+
+✅ <b>الأنواع المدعومة:</b>
+• يوتيوب (YouTube)
+• تيك توك (TikTok)
+• إنستجرام (Instagram)
+• تويتر (Twitter)
+
+💡 <b>جرب رابط يوتيوب:</b>
+https://youtu.be/dQw4w9WgXcQ
+    """)
 
 @bot.message_handler(func=lambda message: True)
-def handle_all(message):
-    text = message.text
-    if text.startswith('http'):
-        bot.reply_to(message, f"""
-🔗 <b>تم استلام الرابط:</b>
-{text}
+def handle_other_messages(message):
+    """معالجة الرسائل الأخرى"""
+    bot.reply_to(message, """
+📌 <b>أرسل رابط فيديو لرفعه</b>
 
-⏳ <i>جاري المعالجة...</i>
-📤 <i>سيتم رفع الفيديو مباشرة إلى هذه المحادثة</i>
+🚀 <b>الأنواع المدعومة:</b>
+• يوتيوب
+• تيك توك
+• إنستجرام
+• تويتر
 
-💡 <i>ملاحظة:</i> خاصية التحميل قيد التطوير
-سيتم إضافة yt-dlp قريباً لتحميل الفيديوهات
-        """)
-    else:
-        bot.reply_to(message, "📌 أرسل رابط فيديو (يوتيوب، تيك توك، إلخ) أو استخدم /start")
+💡 <b>جرب:</b> /test لروابط تجريبية
+❓ <b>مساعدة:</b> /start للبدء
+    """)
 
 # ============== KEEP ALIVE ==============
 def keep_alive():
