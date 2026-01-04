@@ -1,5 +1,4 @@
 Flask==2.3.3
 pyTelegramBotAPI==4.19.0
 requests==2.31.0
-python-dotenv==1.0.0
-yt-dlp==2024.4.9
+yt-dlp==2024.12.30
