@@ -1,6 +1,6 @@
 """
 🎬 Telegram Video Bot - Render Hosting
-✅ 24/7 Online | ✅ Cloud Hosted | ✅ Playlist Support
+✅ 24/7 Online | ✅ Cloud Hosted | ✅ TikTok & YouTube Playlists
 """
 
 import os
@@ -10,6 +10,7 @@ import requests
 import urllib3
 import tempfile
 import threading
+import re
 from flask import Flask
 from threading import Thread
 from io import BytesIO
@@ -18,7 +19,7 @@ import yt_dlp
 # ============== CONFIG ==============
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8288842404:AAEp6wAU8EC3uepgsuwuzYkBO_Mv3nMecp4')
 PORT = int(os.environ.get('PORT', 10000))
-MAX_VIDEOS_PER_PLAYLIST = 10  # تحديد عدد الفيديوهات في القائمة
+MAX_VIDEOS_PER_PLAYLIST = 5  # تحديد عدد الفيديوهات في القائمة
 
 print("=" * 60)
 print("🎬 Telegram Video Bot - Render Hosting")
@@ -188,7 +189,7 @@ def home():
                 </div>
                 <div class="info-item">
                     <span class="info-label">Features:</span>
-                    <span class="info-value">Single Videos & Playlists</span>
+                    <span class="info-value">TikTok & YouTube Playlists</span>
                 </div>
             </div>
             
@@ -199,11 +200,11 @@ def home():
                 </div>
                 <div class="feature">
                     <div class="feature-icon">📁</div>
-                    <div>Playlists</div>
+                    <div>TikTok Playlists</div>
                 </div>
                 <div class="feature">
-                    <div class="feature-icon">⚡</div>
-                    <div>Direct Upload</div>
+                    <div class="feature-icon">🎵</div>
+                    <div>YouTube Playlists</div>
                 </div>
             </div>
             
@@ -240,45 +241,111 @@ except Exception as e:
     print(f"⚠️ Could not clear webhook: {e}")
 
 # ============== VIDEO DOWNLOAD FUNCTIONS ==============
-def is_playlist(url):
-    """التحقق إذا كان الرابط قائمة تشغيل"""
-    return 'playlist' in url or 'list=' in url
+def get_platform(url):
+    """تحديد نوع المنصة من الرابط"""
+    if 'tiktok.com' in url or 'douyin.com' in url:
+        return 'tiktok'
+    elif 'youtube.com' in url or 'youtu.be' in url:
+        return 'youtube'
+    elif 'instagram.com' in url or 'instagr.am' in url:
+        return 'instagram'
+    elif 'twitter.com' in url or 'x.com' in url:
+        return 'twitter'
+    else:
+        return 'unknown'
 
-def get_playlist_info(url):
-    """الحصول على معلومات قائمة التشغيل"""
+def extract_video_urls_from_playlist(url, max_videos=MAX_VIDEOS_PER_PLAYLIST):
+    """استخراج روابط الفيديوهات من قائمة التشغيل"""
     try:
+        platform = get_platform(url)
+        
         ydl_opts = {
-            'extract_flat': True,
             'quiet': True,
             'no_warnings': True,
-            'playlistend': MAX_VIDEOS_PER_PLAYLIST
+            'extract_flat': True,
+            'playlistend': max_videos,
         }
+        
+        # إعدادات خاصة بكل منصة
+        if platform == 'tiktok':
+            ydl_opts.update({
+                'extractor_args': {
+                    'tiktok': {
+                        'skip': ['webpage'],
+                        'approximate_rate': '500K'
+                    }
+                }
+            })
+        elif platform == 'youtube':
+            ydl_opts.update({
+                'extractor_args': {
+                    'youtube': {
+                        'skip': ['hls', 'dash']
+                    }
+                }
+            })
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            return info
+            
+            video_urls = []
+            if 'entries' in info:
+                for entry in info['entries'][:max_videos]:
+                    if entry:
+                        # استخراج رابط الفيديو
+                        if 'url' in entry:
+                            video_urls.append(entry['url'])
+                        elif 'webpage_url' in entry:
+                            video_urls.append(entry['webpage_url'])
+                        elif 'id' in entry:
+                            if platform == 'youtube':
+                                video_urls.append(f"https://www.youtube.com/watch?v={entry['id']}")
+                            elif platform == 'tiktok':
+                                video_urls.append(f"https://www.tiktok.com/@user/video/{entry['id']}")
+            
+            return {
+                'success': True,
+                'video_urls': video_urls,
+                'title': info.get('title', 'قائمة تشغيل'),
+                'count': len(video_urls),
+                'platform': platform
+            }
+            
     except Exception as e:
-        print(f"❌ Playlist info error: {e}")
-        return None
+        print(f"❌ Error extracting playlist: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'video_urls': [],
+            'platform': get_platform(url)
+        }
 
-def download_single_video(url, chat_id, message_id):
-    """تحميل فيديو فردي"""
+def download_and_upload_single_video(video_url, chat_id, message_id=None, video_index=None, total_videos=None):
+    """تحميل ورفع فيديو واحد"""
     try:
-        bot.edit_message_text(
-            "🔍 <b>جاري فحص رابط الفيديو...</b>",
-            chat_id, message_id
-        )
+        platform = get_platform(video_url)
         
-        # إعدادات yt-dlp المبسطة
+        # تحديث الرسالة إذا كان هناك message_id
+        if message_id and video_index:
+            try:
+                bot.edit_message_text(
+                    f"📥 <b>جاري تحميل الفيديو {video_index} من {total_videos}...</b>\n\n"
+                    f"🌐 <b>المصدر:</b> {platform}",
+                    chat_id, message_id
+                )
+            except:
+                pass
+        
+        # إعدادات yt-dlp حسب المنصة
         ydl_opts = {
-            'format': 'best[ext=mp4]/best[height<=720]',
+            'format': 'best[ext=mp4]/best',
             'outtmpl': '%(title)s.%(ext)s',
             'quiet': True,
             'no_warnings': True,
-            'noplaylist': True,  # تأكيد عدم تحميل قوائم التشغيل
+            'noplaylist': True,
             'nooverwrites': True,
-            'retries': 3,
-            'fragment_retries': 3,
+            'retries': 5,
+            'fragment_retries': 5,
             'ignoreerrors': True,
             'no_check_certificate': True,
             'geo_bypass': True,
@@ -287,49 +354,55 @@ def download_single_video(url, chat_id, message_id):
             }
         }
         
-        # إنشاء مجلد مؤقت في الذاكرة
+        # إعدادات خاصة بكل منصة
+        if platform == 'tiktok':
+            ydl_opts.update({
+                'format': 'best',
+                'extractor_args': {
+                    'tiktok': {
+                        'skip': ['webpage'],
+                        'approximate_rate': '1M'
+                    }
+                }
+            })
+        elif platform == 'youtube':
+            ydl_opts.update({
+                'format': 'best[height<=720]/best',
+            })
+        
+        # إنشاء مجلد مؤقت
         with tempfile.TemporaryDirectory() as temp_dir:
             ydl_opts['outtmpl'] = os.path.join(temp_dir, '%(title)s.%(ext)s')
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # الحصول على معلومات الفيديو أولاً
-                info = ydl.extract_info(url, download=False)
-                
-                # إذا كان الرابط قائمة تشغيل، استخراج أول فيديو
-                if 'entries' in info:
-                    if info['entries']:
-                        # أخذ أول فيديو في القائمة
-                        first_video = info['entries'][0]
-                        if 'url' in first_video:
-                            url = first_video['url']
-                        elif 'id' in first_video:
-                            # بناء رابط الفيديو الفردي
-                            url = f"https://www.youtube.com/watch?v={first_video['id']}"
-                        # إعادة استخراج المعلومات للفيديو الجديد
-                        info = ydl.extract_info(url, download=False)
-                
-                video_title = info.get('title', 'فيديو')[:50]
+                info = ydl.extract_info(video_url, download=False)
+                video_title = info.get('title', 'فيديو')[:100]
                 duration = info.get('duration', 0)
                 
-                bot.edit_message_text(
-                    f"📥 <b>جاري تحميل الفيديو...</b>\n\n"
-                    f"🎬 <b>العنوان:</b> {video_title}\n"
-                    f"⏱ <b>المدة:</b> {duration // 60}:{duration % 60:02d}",
-                    chat_id, message_id
-                )
+                # تحديث الرسالة
+                if message_id and video_index:
+                    try:
+                        bot.edit_message_text(
+                            f"📥 <b>جاري تحميل الفيديو {video_index} من {total_videos}...</b>\n\n"
+                            f"🎬 <b>العنوان:</b> {video_title}\n"
+                            f"⏱ <b>المدة:</b> {duration // 60}:{duration % 60:02d}\n"
+                            f"🌐 <b>المصدر:</b> {platform}",
+                            chat_id, message_id
+                        )
+                    except:
+                        pass
                 
                 # تحميل الفيديو
-                ydl.download([url])
+                ydl.download([video_url])
                 
                 # العثور على الملف المحمل
                 video_file = ydl.prepare_filename(info)
-                if not video_file.endswith('.mp4'):
-                    video_file = video_file.rsplit('.', 1)[0] + '.mp4'
                 
-                # البحث عن الملف إذا لم يوجد بالاسم الدقيق
-                if not os.path.exists(video_file):
+                # البحث عن الملف إذا لم يكن mp4
+                if not os.path.exists(video_file) or not video_file.endswith('.mp4'):
                     for file in os.listdir(temp_dir):
-                        if file.endswith(('.mp4', '.mkv', '.webm', '.avi', '.mov')):
+                        if any(file.endswith(ext) for ext in ['.mp4', '.mkv', '.webm']):
                             video_file = os.path.join(temp_dir, file)
                             break
                 
@@ -337,201 +410,141 @@ def download_single_video(url, chat_id, message_id):
                     file_size = os.path.getsize(video_file)
                     file_size_mb = file_size / (1024 * 1024)
                     
-                    bot.edit_message_text(
-                        f"📤 <b>جاري رفع الفيديو...</b>\n\n"
-                        f"📦 <b>الحجم:</b> {file_size_mb:.1f}MB",
-                        chat_id, message_id
-                    )
+                    # تحديث الرسالة قبل الرفع
+                    if message_id:
+                        try:
+                            bot.edit_message_text(
+                                f"📤 <b>جاري رفع الفيديو {video_index if video_index else ''}...</b>\n\n"
+                                f"📦 <b>الحجم:</b> {file_size_mb:.1f}MB",
+                                chat_id, message_id
+                            )
+                        except:
+                            pass
+                    
+                    # إعداد التسمية التوضيحية
+                    caption = f"🎬 {video_title}\n\n"
+                    if video_index:
+                        caption += f"🔢 الفيديو {video_index} من {total_videos}\n"
+                    caption += f"🌐 تم الرفع بواسطة @ishdmvfvzobot\n"
+                    caption += f"⏱ المدة: {duration // 60}:{duration % 60:02d}"
                     
                     # رفع الفيديو إلى تليجرام
                     with open(video_file, 'rb') as video:
                         bot.send_video(
                             chat_id,
                             video,
-                            caption=f"🎬 {info.get('title', 'فيديو')}\n\n"
-                                   f"📥 تم الرفع بواسطة @ishdmvfvzobot\n"
-                                   f"🌐 استضافة Render.com 24/7",
+                            caption=caption,
                             supports_streaming=True,
                             timeout=300,
                             parse_mode='HTML'
                         )
                     
-                    bot.edit_message_text(
-                        "✅ <b>تم رفع الفيديو بنجاح!</b>\n\n"
-                        "🎬 الفيديو الآن في محادثتك\n"
-                        "💾 مخزن على تليجرام للأبد",
-                        chat_id, message_id
-                    )
-                    
                     return True
                 else:
-                    bot.edit_message_text(
-                        "❌ <b>لم يتم العثور على ملف الفيديو</b>\n\n"
-                        "💡 حاول رابط فيديو فردي مباشر",
-                        chat_id, message_id
-                    )
+                    print(f"❌ File not found: {video_file}")
                     return False
                 
-    except yt_dlp.utils.DownloadError as e:
-        error_msg = str(e)
-        if "Private video" in error_msg:
-            bot.edit_message_text(
-                "🔒 <b>الفيديو خاص ولا يمكن الوصول إليه</b>",
-                chat_id, message_id
-            )
-        elif "Unsupported URL" in error_msg:
-            bot.edit_message_text(
-                "❌ <b>رابط غير مدعوم</b>\n\n"
-                "💡 تأكد من صحة الرابط",
-                chat_id, message_id
-            )
-        else:
-            bot.edit_message_text(
-                f"❌ <b>خطأ في التحميل:</b>\n\n{error_msg[:200]}",
-                chat_id, message_id
-            )
-        return False
-        
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        bot.edit_message_text(
-            "❌ <b>حدث خطأ غير متوقع</b>\n\n"
-            "💡 حاول مرة أخرى",
-            chat_id, message_id
-        )
+        print(f"❌ Error downloading video: {e}")
         return False
 
-def handle_playlist(url, chat_id, message_id):
-    """معالجة قائمة التشغيل"""
+def handle_video_playlist(url, chat_id, message_id):
+    """معالجة قوائم التشغيل من جميع المنصات"""
     try:
+        # تحديث الرسالة
         bot.edit_message_text(
-            "📁 <b>تم اكتشاف قائمة تشغيل!</b>\n\n"
-            "🔍 جاري تحليل القائمة...",
+            "🔍 <b>جاري تحليل قائمة التشغيل...</b>\n\n"
+            "⏳ <i>قد يستغرق بضع ثواني</i>",
             chat_id, message_id
         )
         
-        # الحصول على معلومات القائمة
-        info = get_playlist_info(url)
-        if not info or 'entries' not in info:
+        # استخراج روابط الفيديوهات من القائمة
+        playlist_info = extract_video_urls_from_playlist(url)
+        
+        if not playlist_info['success'] or not playlist_info['video_urls']:
             bot.edit_message_text(
                 "❌ <b>لا يمكن قراءة قائمة التشغيل</b>\n\n"
-                "💡 تأكد من أن القائمة عامة",
+                f"💡 <i>{playlist_info.get('error', 'تأكد من أن القائمة عامة')}</i>",
                 chat_id, message_id
             )
             return
         
-        videos = info.get('entries', [])
-        total_videos = len(videos)
+        video_urls = playlist_info['video_urls']
+        total_videos = len(video_urls)
+        platform = playlist_info['platform']
         
-        if total_videos == 0:
-            bot.edit_message_text(
-                "❌ <b>القائمة فارغة</b>\n\n"
-                "💡 حاول قائمة تشغيل أخرى",
-                chat_id, message_id
-            )
-            return
-        
+        # تحديث الرسالة بالمعلومات
         bot.edit_message_text(
-            f"📁 <b>قائمة تشغيل تم اكتشافها</b>\n\n"
-            f"🎬 <b>العنوان:</b> {info.get('title', 'قائمة تشغيل')[:50]}...\n"
+            f"📁 <b>قائمة تشغيل {platform.upper()} تم اكتشافها</b>\n\n"
+            f"🎬 <b>العنوان:</b> {playlist_info['title'][:50]}...\n"
             f"🔢 <b>عدد الفيديوهات:</b> {total_videos}\n\n"
-            f"📥 <b>سيتم رفع أول {min(3, total_videos)} فيديو...</b>",
+            f"📥 <b>جاري رفع {min(MAX_VIDEOS_PER_PLAYLIST, total_videos)} فيديو...</b>",
             chat_id, message_id
         )
         
-        # رفع أول 3 فيديوهات فقط لتجنب الحمل الزائد
-        videos_to_upload = min(3, total_videos)
+        # رفع الفيديوهات
         uploaded_count = 0
+        videos_to_upload = min(MAX_VIDEOS_PER_PLAYLIST, total_videos)
         
-        for i, video in enumerate(videos[:videos_to_upload], 1):
+        for i, video_url in enumerate(video_urls[:videos_to_upload], 1):
             try:
-                bot.edit_message_text(
-                    f"📥 <b>جاري رفع الفيديو {i} من {videos_to_upload}...</b>\n\n"
-                    f"✅ تم رفع: {uploaded_count}",
-                    chat_id, message_id
+                # تحديث تقدم الرفع
+                try:
+                    bot.edit_message_text(
+                        f"📤 <b>جاري رفع الفيديو {i} من {videos_to_upload}...</b>\n\n"
+                        f"✅ تم رفع: {uploaded_count}\n"
+                        f"❌ فشل: {i - 1 - uploaded_count}",
+                        chat_id, message_id
+                    )
+                except:
+                    pass
+                
+                # تحميل ورفع الفيديو
+                success = download_and_upload_single_video(
+                    video_url, 
+                    chat_id, 
+                    message_id, 
+                    video_index=i, 
+                    total_videos=videos_to_upload
                 )
                 
-                # الحصول على رابط الفيديو الفردي
-                video_url = None
-                if 'url' in video:
-                    video_url = video['url']
-                elif 'id' in video:
-                    video_url = f"https://www.youtube.com/watch?v={video['id']}"
+                if success:
+                    uploaded_count += 1
                 
-                if video_url:
-                    # تحميل ورفع الفيديو
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        ydl_opts = {
-                            'format': 'best[ext=mp4]/best[height<=480]',
-                            'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
-                            'quiet': True,
-                            'no_warnings': True,
-                            'noplaylist': True
-                        }
-                        
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            video_info = ydl.extract_info(video_url, download=True)
-                            video_file = ydl.prepare_filename(video_info)
-                            
-                            if not video_file.endswith('.mp4'):
-                                video_file = video_file.rsplit('.', 1)[0] + '.mp4'
-                            
-                            if os.path.exists(video_file):
-                                with open(video_file, 'rb') as vf:
-                                    bot.send_video(
-                                        chat_id,
-                                        vf,
-                                        caption=f"🎬 {video_info.get('title', f'فيديو {i}')}\n"
-                                               f"📁 جزء من قائمة التشغيل\n"
-                                               f"🔢 {i} من {videos_to_upload}\n\n"
-                                               f"📥 @ishdmvfvzobot",
-                                        supports_streaming=True,
-                                        timeout=300
-                                    )
-                                uploaded_count += 1
-                
-                # انتظار بين الفيديوهات
+                # انتظار بين الفيديوهات لتجنب الحمل الزائد
                 if i < videos_to_upload:
-                    time.sleep(5)
+                    time.sleep(3)
                     
             except Exception as e:
-                print(f"❌ Error uploading video {i}: {e}")
+                print(f"❌ Error processing video {i}: {e}")
                 continue
         
         # رسالة النجاح النهائية
+        success_rate = (uploaded_count / videos_to_upload) * 100 if videos_to_upload > 0 else 0
+        
         bot.edit_message_text(
             f"✅ <b>اكتمل رفع القائمة!</b>\n\n"
-            f"📁 <b>القائمة:</b> {info.get('title', 'قائمة تشغيل')[:30]}...\n"
-            f"🔢 <b>تم رفع:</b> {uploaded_count} من {videos_to_upload} فيديو\n\n"
-            f"🎬 جميع الفيديوهات في محادثتك\n"
-            f"💾 مخزنة على تليجرام للأبد",
+            f"📁 <b>القائمة:</b> {playlist_info['title'][:30]}...\n"
+            f"🌐 <b>المنصة:</b> {platform.upper()}\n"
+            f"🔢 <b>إجمالي الفيديوهات:</b> {total_videos}\n"
+            f"📤 <b>تم رفع:</b> {uploaded_count} من {videos_to_upload} فيديو\n"
+            f"📊 <b>معدل النجاح:</b> {success_rate:.0f}%\n\n"
+            f"🎬 <b>جميع الفيديوهات في محادثتك</b>\n"
+            f"💾 <b>محفوظة على تليجرام للأبد</b>",
             chat_id, message_id
         )
         
     except Exception as e:
-        print(f"❌ Playlist error: {e}")
-        bot.edit_message_text(
-            f"❌ <b>خطأ في معالجة القائمة:</b>\n\n{str(e)[:100]}",
-            chat_id, message_id
-        )
+        print(f"❌ Playlist processing error: {e}")
+        try:
+            bot.edit_message_text(
+                f"❌ <b>حدث خطأ أثناء معالجة القائمة:</b>\n\n{str(e)[:100]}",
+                chat_id, message_id
+            )
+        except:
+            pass
 
-def download_video_thread(url, chat_id, message_id, is_playlist=False):
-    """تشغيل التحميل في thread منفصل"""
-    if is_playlist:
-        thread = threading.Thread(
-            target=handle_playlist,
-            args=(url, chat_id, message_id),
-            daemon=True
-        )
-    else:
-        thread = threading.Thread(
-            target=download_single_video,
-            args=(url, chat_id, message_id),
-            daemon=True
-        )
-    thread.start()
-
-# ============== BOT COMMANDS ==============
+# ============== BOT MESSAGE HANDLERS ==============
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     welcome = """
@@ -540,27 +553,32 @@ def send_welcome(message):
 
 ⚡ <b>المميزات:</b>
 • رفع فيديوهات فردية
-• رفع قوائم التشغيل (أول 3 فيديوهات)
+• رفع قوائم تشغيل تيك توك
+• رفع قوائم يوتيوب
 • يعمل 24/7 على السحابة
 • لا يحفظ ملفات على جهازك
 
 🚀 <b>كيفية الاستخدام:</b>
 1. أرسل رابط فيديو فردي
 2. أو أرسل رابط قائمة تشغيل
-3. انتظر قليلاً (1-5 دقائق)
+3. انتظر قليلاً
 4. الفيديو/الفيديوهات تصل مباشرة
 
 📌 <b>الأوامر المتاحة:</b>
 /start - بدء البوت
 /status - حالة البوت
 /test - رابط تجريبي
-/playlist - رابط قائمة تجريبية
+/tiktok - قائمة تيك توك تجريبية
 
-🌐 <b>الاستضافة:</b> Render.com
+🌐 <b>المدعوم:</b>
+• تيك توك (فيديوهات وقوائم)
+• يوتيوب (فيديوهات وقوائم)
+• إنستجرام (فيديوهات)
+• تويتر (فيديوهات)
 
 💡 <b>ملاحظة:</b>
 • الحد الأقصى: 50MB للفيديو
-• قوائم التشغيل: أول 3 فيديوهات فقط
+• قوائم التشغيل: أول 5 فيديوهات فقط
 • قد يستغرق التحميل وقتاً
     """
     bot.reply_to(message, welcome)
@@ -575,7 +593,7 @@ def status_command(message):
 🤖 البوت: @ishdmvfvzobot
 🔗 الرابط: https://telegram-video-bot-n4aj.onrender.com
 🕒 الوقت: {time.ctime()}
-🎬 المميزات: فيديوهات فردية + قوائم
+🎬 المميزات: تيك توك + يوتيوب + قوائم
     """
     bot.reply_to(message, status_msg)
 
@@ -589,53 +607,74 @@ def test_command(message):
     test_links = """
 🔗 <b>روابط تجريبية:</b>
 
+🎵 <b>تيك توك:</b>
+https://www.tiktok.com/@khaby00
+https://www.tiktok.com/@daviddobrik
+
+📁 <b>يوتيوب بلاي ليست:</b>
+https://youtube.com/playlist?list=PLMC9KNkIncKtPzgY-5rmhvj7fax8fdxoj
+https://youtube.com/playlist?list=PLZHQObOWTQDMsr9K-rj53DwVRMYO3t5Yr
+
 🎬 <b>فيديوهات فردية:</b>
 https://youtube.com/shorts/Aa7KcUfN7Fc
 https://youtu.be/dQw4w9WgXcQ
-
-📁 <b>قوائم تشغيل:</b>
-https://youtube.com/playlist?list=PLMC9KNkIncKtPzgY-5rmhvj7fax8fdxoj
-https://youtube.com/playlist?list=PLZHQObOWTQDMsr9K-rj53DwVRMYO3t5Yr
 
 🚀 <b>أرسل أي رابط وسيتم رفعه!</b>
     """
     bot.reply_to(message, test_links)
 
-@bot.message_handler(commands=['playlist'])
-def playlist_test_command(message):
-    """رابط قائمة تجريبية مباشر"""
-    playlist_url = "https://youtube.com/playlist?list=PLMC9KNkIncKtPzgY-5rmhvj7fax8fdxoj"
+@bot.message_handler(commands=['tiktok'])
+def tiktok_test_command(message):
+    """رابط تيك توك تجريبي"""
+    tiktok_url = "https://www.tiktok.com/@khaby00"
     
     msg = bot.reply_to(message, """
-📁 <b>جاري معالجة قائمة التشغيل التجريبية...</b>
+🎵 <b>جاري معالجة قائمة تيك توك...</b>
 
-⏳ <i>سيتم رفع أول 3 فيديوهات من القائمة</i>
+⏳ <i>سيتم رفع أول 5 فيديوهات من الحساب</i>
+📦 <i>قد يستغرق 2-5 دقائق</i>
     """)
     
-    download_video_thread(playlist_url, message.chat.id, msg.message_id, is_playlist=True)
+    # استخدام thread للتحميل
+    thread = threading.Thread(
+        target=handle_video_playlist,
+        args=(tiktok_url, message.chat.id, msg.message_id),
+        daemon=True
+    )
+    thread.start()
 
 @bot.message_handler(func=lambda message: message.text and (
+    'tiktok.com' in message.text or
     'youtube.com' in message.text or 
     'youtu.be' in message.text or
-    'tiktok.com' in message.text or
-    'instagram.com' in message.text
+    'instagram.com' in message.text or
+    'twitter.com' in message.text or
+    'x.com' in message.text
 ))
 def handle_video_url(message):
-    """معالجة روابط الفيديوهات"""
+    """معالجة جميع روابط الفيديوهات"""
     url = message.text.strip()
     
-    # التحقق إذا كان رابط قائمة تشغيل
-    is_playlist_url = is_playlist(url)
+    # التحقق إذا كان رابط قائمة تشغيل أو حساب
+    is_playlist = any(keyword in url.lower() for keyword in [
+        'playlist', 'list=', '/@', '/user/', '/channel/'
+    ])
     
-    if is_playlist_url:
+    if is_playlist:
         msg = bot.reply_to(message, """
-📁 <b>تم اكتشاف رابط قائمة تشغيل!</b>
+📁 <b>تم اكتشاف رابط قائمة/حساب!</b>
 
-🔍 <b>جاري تحليل القائمة...</b>
-⏳ <i>سيتم رفع أول 3 فيديوهات</i>
-📦 <i>قد يستغرق 5-10 دقائق</i>
+🔍 <b>جاري تحليل المحتوى...</b>
+⏳ <i>قد يستغرق بضع ثواني</i>
         """)
-        download_video_thread(url, message.chat.id, msg.message_id, is_playlist=True)
+        
+        # استخدام thread للتحميل
+        thread = threading.Thread(
+            target=handle_video_playlist,
+            args=(url, message.chat.id, msg.message_id),
+            daemon=True
+        )
+        thread.start()
     else:
         msg = bot.reply_to(message, """
 🎬 <b>تم اكتشاف رابط فيديو فردي</b>
@@ -643,7 +682,13 @@ def handle_video_url(message):
 🔍 <b>جاري فحص الفيديو...</b>
 ⏳ <i>قد يستغرق 1-3 دقائق</i>
         """)
-        download_video_thread(url, message.chat.id, msg.message_id, is_playlist=False)
+        
+        # استخدام thread للتحميل
+        thread = threading.Thread(
+            target=lambda: download_and_upload_single_video(url, message.chat.id, msg.message_id),
+            daemon=True
+        )
+        thread.start()
 
 @bot.message_handler(func=lambda message: True)
 def handle_other_messages(message):
@@ -651,34 +696,31 @@ def handle_other_messages(message):
     bot.reply_to(message, """
 📌 <b>أرسل رابط فيديو أو قائمة تشغيل</b>
 
-🎬 <b>فيديوهات فردية:</b>
-• يوتيوب
-• تيك توك
-• إنستجرام
+🎵 <b>تيك توك:</b>
+• فيديو فردي: https://vm.tiktok.com/xxxxxx
+• حساب: https://www.tiktok.com/@username
+• موسيقى: https://www.tiktok.com/music/xxxx
 
-📁 <b>قوائم تشغيل:</b>
-• يوتيوب بلايليست
+📁 <b>يوتيوب:</b>
+• فيديو: https://youtu.be/xxxx
+• بلاي ليست: https://youtube.com/playlist?list=xxxx
 
 💡 <b>جرب:</b> /test لروابط تجريبية
-📁 <b>قائمة:</b> /playlist لقائمة تجريبية
+🎵 <b>تيك توك:</b> /tiktok لقائمة تجريبية
 ❓ <b>مساعدة:</b> /start للبدء
     """)
 
 # ============== KEEP ALIVE ==============
 def keep_alive():
     """إبقاء البوت نشطاً على الخطة المجانية"""
-    import urllib3
-    http = urllib3.PoolManager()
-    
     while True:
         try:
-            response = http.request('GET', f'https://telegram-video-bot-n4aj.onrender.com/ping', timeout=10)
-            if response.status == 200:
-                print(f"❤️ Keep-alive ping successful at {time.ctime()}")
+            requests.get(f'https://telegram-video-bot-n4aj.onrender.com/ping', timeout=10)
+            print(f"❤️ Keep-alive ping at {time.ctime()}")
         except Exception as e:
             print(f"⚠️ Keep-alive error: {e}")
         
-        time.sleep(270)
+        time.sleep(240)  # كل 4 دقائق
 
 # ============== RUN FUNCTIONS ==============
 def run_flask():
@@ -692,7 +734,7 @@ def run_telegram():
     
     time.sleep(2)
     
-    max_attempts = 5
+    max_attempts = 3
     for attempt in range(max_attempts):
         try:
             print(f"🔄 Attempt {attempt + 1}/{max_attempts}...")
@@ -719,37 +761,32 @@ def run_telegram():
             print(f"⚠️ Bot error (attempt {attempt + 1}): {error_msg[:100]}")
             
             if "409" in error_msg:
-                print("🔄 Conflict detected, trying to reset webhook...")
-                try:
-                    import urllib3
-                    http = urllib3.PoolManager()
-                    reset_url = f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=true"
-                    response = http.request('GET', reset_url)
-                    print(f"Webhook reset response: {response.status}")
-                except Exception as reset_error:
-                    print(f"Webhook reset error: {reset_error}")
-                
-                wait_time = (attempt + 1) * 10
-                print(f"⏳ Waiting {wait_time} seconds before retry...")
+                print("🔄 Conflict detected...")
+                wait_time = (attempt + 1) * 5
+                print(f"⏳ Waiting {wait_time} seconds...")
                 time.sleep(wait_time)
             else:
-                print("⏳ Waiting 5 seconds before retry...")
-                time.sleep(5)
+                print("⏳ Waiting 3 seconds...")
+                time.sleep(3)
     
     if attempt == max_attempts - 1:
-        print("❌ Failed to start bot after multiple attempts")
+        print("⚠️ Bot might have connection issues, but will try to reconnect")
 
 # ============== MAIN ==============
 if __name__ == "__main__":
     print("🚀 Starting all services...")
     
+    # بدء thread إبقاء البوت نشطاً
     keep_alive_thread = Thread(target=keep_alive, daemon=True)
     keep_alive_thread.start()
     
+    # بدء سيرفر Flask
     flask_thread = Thread(target=run_flask, daemon=True)
     flask_thread.start()
     
+    # انتظار بدء سيرفر الويب
     time.sleep(3)
     print("✅ Web server started successfully!")
     
+    # بدء بوت تلجرام
     run_telegram()
