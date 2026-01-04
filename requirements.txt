@@ -1,4 +1,4 @@
 Flask==2.3.3
 pyTelegramBotAPI==4.19.0
 requests==2.31.0
-yt-dlp==2024.12.30
+yt-dlp==2023.11.16  # إصدار قديم مضمون
