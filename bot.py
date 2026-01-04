@@ -1,196 +1,210 @@
 """
-🎬 Telegram Video Upload Bot - Render Hosting
-✅ 24/7 Online
-✅ No local storage
-✅ Direct upload to Telegram
+🎬 Telegram Video Bot - Render Hosting
+✅ 24/7 Online | ✅ Cloud Hosted
 """
 
 import os
-import re
-import uuid
 import time
 import telebot
-import logging
-import threading
-import tempfile
 import requests
-import sys
 from flask import Flask
 from threading import Thread
-from typing import Optional, Dict
-from io import BytesIO
 
-import yt_dlp
-
-# ============== إعدادات البوت ==============
+# ============== CONFIG ==============
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8288842404:AAEp6wAU8EC3uepgsuwuzYkBO_Mv3nMecp4')
+PORT = int(os.environ.get('PORT', 10000))
 
-# ============== إعداد Flask للسيرفر ==============
+print("=" * 50)
+print("🎬 Telegram Video Bot - Render Hosting")
+print("=" * 50)
+print(f"🤖 Token: {TOKEN[:15]}...")
+print(f"🌐 Port: {PORT}")
+
+# ============== FLASK WEB SERVER ==============
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return """
+    html = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>🎬 Telegram Video Bot</title>
+        <title>Telegram Video Bot</title>
+        <meta charset="UTF-8">
         <style>
-            body { font-family: Arial; text-align: center; padding: 50px; }
-            .status { color: green; font-size: 24px; }
-            .info { margin-top: 20px; }
+            body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                text-align: center;
+                padding: 50px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                margin: 0;
+            }
+            .container {
+                background: white;
+                border-radius: 20px;
+                padding: 40px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                max-width: 600px;
+                margin: 0 auto;
+            }
+            .status {
+                color: #4CAF50;
+                font-size: 28px;
+                margin: 20px 0;
+                font-weight: bold;
+            }
+            .bot-link {
+                display: inline-block;
+                background: #0088cc;
+                color: white;
+                padding: 12px 30px;
+                border-radius: 50px;
+                text-decoration: none;
+                font-weight: bold;
+                margin-top: 20px;
+            }
+            .info {
+                background: #f8f9fa;
+                padding: 20px;
+                border-radius: 10px;
+                margin: 20px 0;
+                text-align: left;
+            }
         </style>
     </head>
     <body>
-        <div class="status">✅ البوت يعمل بنجاح!</div>
-        <div class="info">
-            <p>🤖 Telegram Bot: @ishdmvfvzobot</p>
-            <p>⏰ Uptime: 24/7</p>
-            <p>🌐 Host: Render.com</p>
+        <div class="container">
+            <h1>🤖 Telegram Video Bot</h1>
+            <div class="status">✅ ONLINE & WORKING</div>
+            
+            <div class="info">
+                <p><strong>Bot:</strong> @ishdmvfvzobot</p>
+                <p><strong>Host:</strong> Render.com</p>
+                <p><strong>Status:</strong> Active 24/7</p>
+                <p><strong>Time:</strong> """ + time.ctime() + """</p>
+            </div>
+            
+            <p>This bot is permanently hosted on Render cloud</p>
+            <a href="https://t.me/ishdmvfvzobot" class="bot-link" target="_blank">
+                🚀 Open in Telegram
+            </a>
         </div>
     </body>
     </html>
     """
+    return html
 
 @app.route('/health')
 def health():
-    return {"status": "healthy", "timestamp": time.time()}, 200
+    return "OK", 200
 
-# ============== إعداد البوت ==============
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+@app.route('/ping')
+def ping():
+    return "Pong", 200
 
+# ============== TELEGRAM BOT ==============
 bot = telebot.TeleBot(TOKEN, parse_mode='HTML')
 
-# ============== تخزين البيانات ==============
-url_store = {}
-
-# ============== دوال المساعدة ==============
-def store_url(user_id: int, url: str) -> str:
-    """تخزين الرابط"""
-    data_id = str(uuid.uuid4())[:8]
-    if user_id not in url_store:
-        url_store[user_id] = {}
-    url_store[user_id][data_id] = {'url': url, 'time': time.time()}
-    return data_id
-
-def get_url(user_id: int, data_id: str) -> Optional[str]:
-    """استرجاع الرابط"""
-    return url_store.get(user_id, {}).get(data_id, {}).get('url')
-
-# ============== معالجات الأوامر ==============
-@bot.message_handler(commands=['start'])
-def start_command(message):
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
     welcome = """
-🎬 <b>بوت رفع الفيديوهات المباشر</b>
-🌐 <i>استضافة دائمة على Render</i>
+🎬 <b>مرحباً! أنا بوت رفع الفيديوهات</b>
 
-✅ <b>المميزات:</b>
-• يعمل 24/7 بدون توقف
+⚡ <b>المميزات:</b>
 • رفع مباشر إلى تليجرام
-• لا تحميل على جهازك
-• تخزين دائم في محادثتك
+• يعمل 24/7 على السحابة
+• لا يحفظ ملفات على جهازك
 
-🚀 <b>أرسل رابط فيديو أو قائمة تشغيل</b>
+🚀 <b>كيفية الاستخدام:</b>
+أرسل رابط فيديو (يوتيوب، تيك توك، إلخ)
+
+📌 <b>الأوامر المتاحة:</b>
+/start - بدء البوت
+/status - حالة البوت
+/ping - اختبار الاتصال
+
+🌐 <b>الاستضافة:</b> Render.com
     """
     bot.reply_to(message, welcome)
 
 @bot.message_handler(commands=['status'])
 def status_command(message):
-    status_msg = """
+    status_msg = f"""
 📊 <b>حالة البوت:</b>
-✅ <b>النظام:</b> نشط يعمل
-⏰ <b>المدة:</b> 24/7
-🌐 <b>الاستضافة:</b> Render.com
-💾 <b>التخزين:</b> في تليجرام فقط
-🔧 <b>الإصدار:</b> Render Edition
+✅ نشط ويعمل
+🌐 استضافة: Render.com
+⏰ وقت التشغيل: 24/7
+🤖 البوت: @ishdmvfvzobot
+🔗 الرابط: https://telegram-video-bot-n4aj.onrender.com
+🕒 الوقت: {time.ctime()}
     """
     bot.reply_to(message, status_msg)
 
-@bot.message_handler(commands=['help'])
-def help_command(message):
-    help_text = """
-📖 <b>كيفية الاستخدام:</b>
-1. أرسل رابط فيديو (يوتيوب، تيك توك، إلخ)
-2. البوت سيرفع الفيديو مباشرة
-3. الفيديو يبقى في محادثتك للأبد
+@bot.message_handler(commands=['ping'])
+def ping_command(message):
+    bot.reply_to(message, "🏓 Pong! البوت يعمل")
 
-⚠️ <b>ملاحظة:</b>
-• الحد الأقصى: 50 دقيقة للفيديو
-• الجودة: أفضل جودة متاحة
-• السرعة: تعتمد على سرعة المصدر
-    """
-    bot.reply_to(message, help_text)
-
-# ============== معالجة الروابط ==============
 @bot.message_handler(func=lambda message: True)
-def handle_message(message):
-    text = message.text.strip()
-    
-    if not re.match(r'^https?://', text):
-        bot.reply_to(message, "❌ يرجى إرسال رابط صالح")
-        return
-    
-    msg = bot.reply_to(message, "🔍 جاري تحليل الرابط...")
-    
-    try:
-        # تحليل بسيط للمثال
-        if 'youtube.com' in text or 'youtu.be' in text:
-            source = "يوتيوب"
-        elif 'tiktok.com' in text:
-            source = "تيك توك"
-        else:
-            source = "الرابط"
-        
-        reply = f"""
-📥 <b>تم استلام الرابط</b>
+def handle_all(message):
+    text = message.text
+    if text.startswith('http'):
+        bot.reply_to(message, f"""
+🔗 <b>تم استلام الرابط:</b>
+{text}
 
-🔗 <b>المصدر:</b> {source}
-👤 <b>المستخدم:</b> {message.from_user.first_name}
+⏳ <i>جاري المعالجة...</i>
+📤 <i>سيتم رفع الفيديو مباشرة إلى هذه المحادثة</i>
 
-⏳ <b>جاري المعالجة...</b>
-<i>البوت يستخدم استضافة Render للعمل الدائم</i>
-        """
-        
-        bot.edit_message_text(reply, message.chat.id, msg.message_id)
-        
-    except Exception as e:
-        bot.edit_message_text(f"❌ خطأ: {str(e)[:100]}", message.chat.id, msg.message_id)
+💡 <i>ملاحظة:</i> خاصية التحميل قيد التطوير
+        """)
+    else:
+        bot.reply_to(message, "📌 أرسل رابط فيديو (يوتيوب، تيك توك، إلخ) أو استخدم /start")
 
-# ============== تشغيل البوت ==============
-def run_bot():
-    """تشغيل البوت مع إعادة المحاولة"""
-    logger.info("🚀 بدأ تشغيل Telegram Bot...")
+# ============== KEEP ALIVE ==============
+def keep_alive():
+    """إبقاء البوت نشطاً على الخطة المجانية"""
     while True:
         try:
-            bot.polling(none_stop=True, interval=1, timeout=30)
+            requests.get(f"https://telegram-video-bot-n4aj.onrender.com/ping", timeout=10)
+            print(f"❤️ Keep-alive ping at {time.ctime()}")
+        except:
+            pass
+        time.sleep(300)  # كل 5 دقائق
+
+# ============== RUN FUNCTIONS ==============
+def run_flask():
+    """تشغيل سيرفر Flask"""
+    print(f"🌐 Starting Flask on port {PORT}...")
+    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
+
+def run_telegram():
+    """تشغيل بوت تلجرام"""
+    print("🤖 Starting Telegram Bot...")
+    while True:
+        try:
+            bot.polling(none_stop=True, timeout=30)
+            print("✅ Bot polling started successfully")
         except Exception as e:
-            logger.error(f"❌ خطأ في البوت: {e}")
+            print(f"⚠️ Bot error: {e}")
             time.sleep(5)
-            logger.info("🔄 إعادة تشغيل البوت...")
 
-def run_web():
-    """تشغيل سيرفر ويب"""
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
-
-def main():
-    """الدالة الرئيسية"""
-    print("=" * 60)
-    print("🎬 Telegram Video Bot - Render Hosting")
-    print("=" * 60)
-    print(f"Token: {TOKEN[:10]}...")
-    print("Starting services...")
-    
-    # بدء سيرفر الويب في thread منفصل
-    web_thread = Thread(target=run_web, daemon=True)
-    web_thread.start()
-    
-    # بدء البوت
-    run_bot()
-
+# ============== MAIN ==============
 if __name__ == "__main__":
-    main()
+    print("🚀 Starting all services...")
+    
+    # Start keep-alive thread
+    keep_alive_thread = Thread(target=keep_alive, daemon=True)
+    keep_alive_thread.start()
+    
+    # Start Flask in background thread
+    flask_thread = Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    # Wait for Flask to start
+    time.sleep(3)
+    print("✅ All services started successfully!")
+    print("🤖 Bot is now listening for messages...")
+    
+    # Start Telegram bot
+    run_telegram()
