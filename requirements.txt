@@ -1,4 +1,4 @@
-Flask==2.3.3
-pyTelegramBotAPI==4.19.0
-requests==2.31.0
-yt-dlp==2023.11.16  # إصدار قديم مضمون
+pyTelegramBotAPI==4.18.0
+yt-dlp==2023.12.30
+aiohttp==3.9.1
+asyncio==3.4.3
