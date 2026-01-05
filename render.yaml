@@ -6,14 +6,6 @@ services:
     startCommand: python bot.py
     envVars:
       - key: BOT_TOKEN
-        value: "8288842404:AAEp6wAU8EC3uepgsuwuzYkBO_Mv3nMecp4"
+        sync: false
     autoDeploy: true
     plan: free
-    healthCheckPath: /
-    headers:
-      - path: /*
-        name: X-Frame-Options
-        value: DENY
-      - path: /*
-        name: X-Content-Type-Options
-        value: nosniff
