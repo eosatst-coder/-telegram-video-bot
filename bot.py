@@ -1,25 +1,32 @@
+"""
+🎬 Telegram Video Downloader Bot
+✅ رفع مباشر بدون تخزين محلي
+✅ أعلى جودة متاحة
+✅ دعم الفيديوهات الكبيرة
+✅ يعمل على Render 24/7
+"""
+
 import os
 import re
 import uuid
 import time
 import telebot
 import logging
-import asyncio
-import aiohttp
-import subprocess
-from io import BytesIO
+import threading
 from pathlib import Path
-from urllib.parse import urlparse
+from io import BytesIO
 import yt_dlp
 
 # ============== إعدادات البوت ==============
 TOKEN = os.environ.get("BOT_TOKEN", "8288842404:AAEp6wAU8EC3uepgsuwuzYkBO_Mv3nMecp4")
-ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x]
 
-# ============== إعدادات التسجيل ==============
+# ============== إعدادات التحميل ==============
+MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB حد تليجرام
+
+# ============== إعداد التسجيل ==============
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -31,84 +38,127 @@ TEMP_DIR = Path("temp_videos")
 TEMP_DIR.mkdir(exist_ok=True)
 
 # ============== دوال المساعدة ==============
-def get_video_info(url):
-    """الحصول على معلومات الفيديو"""
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': False,
-    }
-    
+def get_video_info(url: str):
+    """استخراج معلومات الفيديو"""
     try:
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+        }
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
-            # البحث عن أفضل تنسيق (أعلى جودة)
-            formats = info.get('formats', [])
+            # البحث عن أفضل تنسيق متوافق مع تليجرام
             best_format = None
-            max_filesize = 0
+            best_filesize = 0
             
+            formats = info.get('formats', [])
             for fmt in formats:
-                filesize = fmt.get('filesize') or fmt.get('filesize_approx')
-                if filesize and filesize > max_filesize:
-                    max_filesize = filesize
-                    best_format = fmt
+                # نبحث عن تنسيق mp4 مع صوت وفيديو
+                if (fmt.get('ext') == 'mp4' and 
+                    fmt.get('acodec') != 'none' and 
+                    fmt.get('vcodec') != 'none'):
+                    
+                    filesize = fmt.get('filesize') or fmt.get('filesize_approx') or 0
+                    if filesize > best_filesize:
+                        best_filesize = filesize
+                        best_format = fmt
             
             return {
                 'title': info.get('title', 'فيديو'),
                 'duration': info.get('duration', 0),
                 'best_format': best_format,
-                'filesize': max_filesize,
+                'filesize': best_filesize,
                 'extractor': info.get('extractor_key', 'غير معروف'),
+                'thumbnail': info.get('thumbnail'),
                 'webpage_url': info.get('webpage_url', url)
             }
     except Exception as e:
-        logger.error(f"Error getting video info: {e}")
+        logger.error(f"Error extracting info: {e}")
         return None
 
-def download_highest_quality(url, output_path):
-    """تحميل الفيديو بأعلى جودة"""
-    ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': str(output_path),
-        'quiet': True,
-        'no_warnings': True,
-        'merge_output_format': 'mp4',
-        'postprocessors': [{
-            'key': 'FFmpegVideoConvertor',
-            'preferedformat': 'mp4',
-        }],
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-            'Sec-Fetch-Mode': 'navigate',
-        },
-        'socket_timeout': 30,
-        'retries': 10,
-        'fragment_retries': 10,
-        'skip_unavailable_fragments': True,
-        'continuedl': True,
-        'noprogress': True,
-        'concurrent_fragment_downloads': 5,
-    }
+def download_video_highest_quality(url: str):
+    """تحميل الفيديو بأعلى جودة متاحة"""
+    temp_filename = TEMP_DIR / f"temp_{uuid.uuid4().hex}.mp4"
     
     try:
+        # إعدادات yt-dlp لتحميل أفضل جودة
+        ydl_opts = {
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'outtmpl': str(temp_filename),
+            'quiet': True,
+            'no_warnings': True,
+            'merge_output_format': 'mp4',
+            'postprocessors': [{
+                'key': 'FFmpegVideoConvertor',
+                'preferedformat': 'mp4',
+            }],
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            },
+            'socket_timeout': 30,
+            'retries': 10,
+            'fragment_retries': 10,
+            'skip_unavailable_fragments': True,
+            'continuedl': True,
+            'noprogress': True,
+            'concurrent_fragment_downloads': 5,
+        }
+        
+        # إعدادات خاصة للمنصات
+        extractor_args = {}
+        
+        # إعدادات تيك توك
+        if 'tiktok' in url:
+            extractor_args['tiktok'] = {
+                'app_version': '29.0.0',
+                'manifest_app_version': '29.0.0',
+            }
+        
+        if extractor_args:
+            ydl_opts['extractor_args'] = extractor_args
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            return output_path.exists() and output_path.stat().st_size > 0
+            
+            if temp_filename.exists():
+                file_size = temp_filename.stat().st_size
+                logger.info(f"Downloaded file size: {file_size / (1024*1024):.2f} MB")
+                
+                if file_size > 0:
+                    return temp_filename
+        
+        return None
+        
     except Exception as e:
         logger.error(f"Download error: {e}")
-        return False
+        
+        # حذف الملف المؤقت في حالة الخطأ
+        if temp_filename.exists():
+            temp_filename.unlink()
+        
+        return None
 
 def cleanup_temp_files():
     """تنظيف الملفات المؤقتة القديمة"""
     try:
         current_time = time.time()
-        for file_path in TEMP_DIR.glob("*.mp4"):
-            if file_path.stat().st_mtime < current_time - 3600:  # أقدم من ساعة
+        deleted_count = 0
+        
+        for file_path in TEMP_DIR.glob("*"):
+            # حذف الملفات الأقدم من 30 دقيقة
+            if file_path.stat().st_mtime < current_time - 1800:
                 file_path.unlink()
-                logger.info(f"تم حذف الملف المؤقت: {file_path.name}")
+                deleted_count += 1
+        
+        if deleted_count > 0:
+            logger.info(f"تم حذف {deleted_count} ملف مؤقت")
+            
     except Exception as e:
         logger.error(f"Error cleaning temp files: {e}")
 
@@ -117,9 +167,9 @@ def cleanup_temp_files():
 def start_command(message):
     """أمر البدء البسيط"""
     welcome = """
-🚀 **بوت تحميل الفيديوهات**
+🚀 **مرحبا**
 
-أرسل رابط الفيديو من:
+أرسل رابط أي فيديو من:
 • تيك توك
 • يوتيوب
 • انستجرام
@@ -129,33 +179,60 @@ def start_command(message):
 """
     bot.reply_to(message, welcome)
 
-@bot.message_handler(commands=['stats'])
-def stats_command(message):
-    """عرض إحصائيات البوت"""
-    if message.from_user.id not in ADMIN_IDS and ADMIN_IDS:
-        return
-    
-    cleanup_temp_files()
-    
-    temp_files = list(TEMP_DIR.glob("*.mp4"))
-    total_size = sum(f.stat().st_size for f in temp_files) / (1024*1024)
-    
-    stats_text = f"""
-📊 **إحصائيات البوت**
-    
-📁 الملفات المؤقتة: {len(temp_files)}
-💾 المساحة المستخدمة: {total_size:.2f} MB
-🔄 آخر تنظيف: الآن
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    """أمر المساعدة"""
+    help_text = """
+📖 **كيفية الاستخدام:**
+1. أرسل رابط الفيديو
+2. انتظر حتى يكتمل التحميل
+3. سأرسل لك الفيديو بأعلى جودة
+
+✨ **المميزات:**
+• ⚡ تحميل مباشر بدون تخزين
+• 🎬 أعلى جودة متاحة
+• 📦 دعم الفيديوهات الكبيرة
+• 🔒 خصوصية كاملة
+
+⚠️ **ملاحظات:**
+• الحد الأقصى: 2 جيجابايت
+• قد يستغرق التحميل بضع دقائق
 """
-    bot.reply_to(message, stats_text)
+    bot.reply_to(message, help_text)
+
+@bot.message_handler(commands=['clean'])
+def clean_command(message):
+    """تنظيف الملفات المؤقتة"""
+    try:
+        cleanup_temp_files()
+        
+        # حساب المساحة الحالية
+        total_size = 0
+        file_count = 0
+        
+        for file_path in TEMP_DIR.glob("*"):
+            if file_path.is_file():
+                total_size += file_path.stat().st_size
+                file_count += 1
+        
+        total_size_mb = total_size / (1024 * 1024)
+        
+        bot.reply_to(message, f"🧹 **تم التنظيف**\n\n📁 الملفات: {file_count}\n💾 المساحة: {total_size_mb:.2f} MB")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ خطأ في التنظيف: {str(e)[:100]}")
 
 # ============== معالجة الروابط ==============
 @bot.message_handler(func=lambda message: True)
 def handle_video_url(message):
     """معالجة رابط الفيديو"""
-    chat_id = message.chat.id
     user_id = message.from_user.id
+    chat_id = message.chat.id
     url = message.text.strip()
+    
+    # تجاهل الأوامر
+    if url.startswith('/'):
+        return
     
     # التحقق من الرابط
     if not re.match(r'^https?://', url):
@@ -163,7 +240,7 @@ def handle_video_url(message):
         return
     
     # إرسال رسالة الانتظار
-    wait_msg = bot.send_message(chat_id, "🔍 جاري التحقق من الرابط...")
+    wait_msg = bot.reply_to(message, "🔍 جاري تحليل الرابط...")
     
     try:
         # الحصول على معلومات الفيديو
@@ -176,53 +253,54 @@ def handle_video_url(message):
         # التحقق من حجم الفيديو
         filesize_mb = video_info.get('filesize', 0) / (1024 * 1024)
         
-        if filesize_mb < 50:  # أقل من 50 ميجا
-            bot.edit_message_text("⚠️ الفيديو صغير الحجم (أقل من 50 ميجابايت)\nسيتم تحميله بأعلى جودة...", chat_id, wait_msg.message_id)
-        elif filesize_mb > 2000:  # أكثر من 2 جيجا
+        if filesize_mb > 2000:  # أكثر من 2 جيجا
             bot.edit_message_text("❌ الفيديو كبير جداً (أكثر من 2 جيجابايت)", chat_id, wait_msg.message_id)
             return
         
-        # إعلام المستخدم بالبدء
+        # عرض معلومات الفيديو
+        duration = video_info.get('duration', 0)
+        minutes = duration // 60
+        seconds = duration % 60
+        
         info_text = f"""
-📹 **جاري تحميل الفيديو**
+📹 **تم تحليل الفيديو**
 
-🎬 **العنوان:** {video_info['title'][:100]}
-⏱ **المدة:** {video_info['duration'] // 60}:{video_info['duration'] % 60:02d}
+🎬 **العنوان:** {video_info['title'][:150]}
+⏱ **المدة:** {minutes}:{seconds:02d}
 📦 **الحجم التقريبي:** {filesize_mb:.1f} MB
 🌐 **المصدر:** {video_info['extractor']}
 
-⏳ قد تستغرق العملية بضع دقائق...
+⬇️ **جاري التحميل بأعلى جودة...**
 """
         bot.edit_message_text(info_text, chat_id, wait_msg.message_id)
         
-        # إنشاء اسم ملف مؤقت فريد
-        temp_filename = TEMP_DIR / f"{uuid.uuid4().hex}.mp4"
-        
         # تحميل الفيديو
-        bot.edit_message_text("⬇️ جاري تحميل الفيديو بأعلى جودة...", chat_id, wait_msg.message_id)
+        bot.edit_message_text("📥 جاري تحميل الفيديو... قد تستغرق العملية بضع دقائق", chat_id, wait_msg.message_id)
         
-        download_success = download_highest_quality(url, temp_filename)
+        video_file = download_video_highest_quality(url)
         
-        if not download_success or not temp_filename.exists():
+        if not video_file or not video_file.exists():
             bot.edit_message_text("❌ فشل في تحميل الفيديو", chat_id, wait_msg.message_id)
             return
         
         # التحقق من حجم الملف المحمل
-        actual_size = temp_filename.stat().st_size / (1024 * 1024)
+        actual_size_mb = video_file.stat().st_size / (1024 * 1024)
         
-        if actual_size < 1:  # أقل من 1 ميجا
-            bot.edit_message_text("❌ الفيديو المحمل صغير جداً أو تالف", chat_id, wait_msg.message_id)
-            temp_filename.unlink()
-            return
+        if actual_size_mb < 5:  # أقل من 5 ميجا
+            bot.edit_message_text("⚠️ الفيديو المحمل صغير الحجم، قد تكون الجودة منخفضة", chat_id, wait_msg.message_id)
         
         # إرسال الفيديو
-        bot.edit_message_text("📤 جاري رفع الفيديو إلى تليجرام...", chat_id, wait_msg.message_id)
+        bot.edit_message_text(f"📤 جاري رفع الفيديو ({actual_size_mb:.1f} MB)...", chat_id, wait_msg.message_id)
         
         try:
-            with open(temp_filename, 'rb') as video_file:
+            with open(video_file, 'rb') as f:
+                video_data = BytesIO(f.read())
+                video_data.name = f'{video_info["title"][:50]}.mp4'
+                
+                # إرسال الفيديو
                 bot.send_video(
                     chat_id,
-                    video_file,
+                    video_data,
                     caption=f"🎬 {video_info['title'][:200]}\n\n✅ تم التحميل بأعلى جودة",
                     supports_streaming=True,
                     timeout=300,
@@ -233,67 +311,75 @@ def handle_video_url(message):
             success_msg = f"""
 ✅ **تم رفع الفيديو بنجاح!**
 
-📊 **معلومات الرفع:**
-• 📦 الحجم الفعلي: {actual_size:.1f} MB
+📊 **معلومات التحميل:**
+• 📦 الحجم الفعلي: {actual_size_mb:.1f} MB
 • ⚡ الجودة: أعلى جودة متاحة
-• 💾 التخزين: مؤقت (سيتم حذفه تلقائياً)
+• 📤 الحالة: محفوظ على تليجرام
 
-🚀 لإرسال فيديو آخر، أرسل الرابط مباشرة
+🚀 أرسل رابط فيديو آخر
 """
             bot.edit_message_text(success_msg, chat_id, wait_msg.message_id)
             
         except Exception as send_error:
             logger.error(f"Error sending video: {send_error}")
-            bot.edit_message_text(f"❌ خطأ في إرسال الفيديو: {str(send_error)[:100]}", chat_id, wait_msg.message_id)
+            
+            # محاولة إرسال بدون caption إذا كان هناك خطأ
+            try:
+                with open(video_file, 'rb') as f:
+                    video_data = BytesIO(f.read())
+                    video_data.name = 'video.mp4'
+                    
+                    bot.send_video(
+                        chat_id,
+                        video_data,
+                        supports_streaming=True,
+                        timeout=300
+                    )
+                
+                bot.edit_message_text("✅ تم إرسال الفيديو", chat_id, wait_msg.message_id)
+            except:
+                bot.edit_message_text("❌ فشل في إرسال الفيديو", chat_id, wait_msg.message_id)
         
-        # حذف الملف المؤقت بعد الإرسال
-        try:
-            temp_filename.unlink()
-            logger.info(f"تم حذف الملف المؤقت: {temp_filename.name}")
-        except Exception as e:
-            logger.error(f"Error deleting temp file: {e}")
+        finally:
+            # حذف الملف المؤقت
+            try:
+                video_file.unlink()
+            except:
+                pass
     
     except Exception as e:
-        logger.error(f"General error: {e}")
-        bot.edit_message_text(f"❌ حدث خطأ غير متوقع: {str(e)[:150]}", chat_id, wait_msg.message_id)
-        
-        # تنظيف الملفات المؤقتة في حالة الخطأ
-        cleanup_temp_files()
+        logger.error(f"Error processing video: {e}")
+        bot.edit_message_text(f"❌ خطأ: {str(e)[:150]}", chat_id, wait_msg.message_id)
     
     finally:
-        # تنظيف دوري للملفات القديمة
+        # تنظيف الملفات المؤقتة
         cleanup_temp_files()
-
-# ============== معالجة الأخطاء ==============
-@bot.message_handler(func=lambda message: True, content_types=['text'])
-def handle_invalid(message):
-    """معالجة الرسائل غير الصالحة"""
-    if not message.text.startswith('/'):
-        bot.reply_to(message, "📨 أرسل رابط فيديو فقط")
 
 # ============== دالة للحفاظ على تشغيل البوت ==============
 def keep_alive():
     """إرسال نبضات حياة للبوت"""
     while True:
         try:
-            # إرسال أمر بسيط للحفاظ على النشاط
+            # التحقق من أن البوت يعمل
             bot.get_me()
-            time.sleep(60)  # كل دقيقة
+            time.sleep(30)
         except Exception as e:
             logger.error(f"Keep alive error: {e}")
-            time.sleep(10)
+            time.sleep(5)
 
 # ============== تشغيل البوت ==============
 def run_bot():
-    """تشغيل البوت مع إعادة المحاولة"""
+    """تشغيل البوت مع إعادة المحاولة التلقائية"""
     print("=" * 60)
     print("🚀 بوت تحميل الفيديوهات بأعلى جودة")
-    print("📦 يدعم الفيديوهات فوق 100 ميجابايت")
-    print("⚡ يعمل على Render بشكل دائم")
+    print("📦 يدعم الفيديوهات الكبيرة (حتى 2 جيجابايت)")
+    print("⚡ يعمل على Render 24/7")
     print("=" * 60)
     
+    # تنظيف الملفات المؤقتة عند البدء
+    cleanup_temp_files()
+    
     # بدء thread للحفاظ على النشاط
-    import threading
     keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
     keep_alive_thread.start()
     
@@ -302,17 +388,13 @@ def run_bot():
         try:
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 🔄 جاري تشغيل البوت...")
             bot.polling(none_stop=True, interval=1, timeout=60)
+        except KeyboardInterrupt:
+            print("\n👋 تم إيقاف البوت")
+            break
         except Exception as e:
-            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ خطأ في البوت: {e}")
-            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⏱ انتظر 10 ثواني ثم إعادة التشغيل...")
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ خطأ: {e}")
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ⏱ إعادة التشغيل بعد 10 ثواني...")
             time.sleep(10)
-            
-            # تنظيف الملفات المؤقتة عند إعادة التشغيل
-            cleanup_temp_files()
 
 if __name__ == "__main__":
-    # تنظيف الملفات المؤقتة عند البدء
-    cleanup_temp_files()
-    
-    # تشغيل البوت
     run_bot()
